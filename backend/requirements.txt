@@ -18,9 +18,9 @@ argon2-cffi==23.1.0
 PyJWT==2.10.1
 cryptography==44.0.0
 
-# Redis / Celery
+# Redis / Celery (celery 5.5+ works with redis-py 5/6; keep redis-py>=6 for Redis 7)
 redis>=6.1.0,<9
-celery[redis]==5.4.0
+celery==5.5.3
 
 # HTTP / enrichment (scaffolded for later milestones)
 httpx==0.28.1
