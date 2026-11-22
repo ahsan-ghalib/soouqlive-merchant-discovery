@@ -25,25 +25,9 @@ from app.models.contact import BusinessContact
 from app.models.email_outbox import EmailBlast, EmailOutboxItem
 from app.models.settings import SmtpSettings
 from app.services.mailer import MailerError, send_email
-from app.utils.email import is_valid_email_syntax, normalize_email
+from app.utils.email import is_sendable_email
 
 logger = logging.getLogger(__name__)
-
-JUNK_SUBSTR = (
-    "sentry.io",
-    "wixpress.com",
-    "example.com",
-    "email.com",
-    "mail.com",
-    "test.com",
-    "noreply",
-    "no-reply",
-    "donotreply",
-    "mailer-daemon",
-    "postmaster@",
-    "@sentry.",
-    "ingest.",
-)
 
 
 class OutreachError(Exception):
@@ -53,18 +37,15 @@ class OutreachError(Exception):
         super().__init__(message)
 
 
-def is_junk_email(email: str) -> bool:
-    low = (email or "").lower()
-    return any(j in low for j in JUNK_SUBSTR)
-
-
 def pick_sendable_email(raw: str, normalized: Optional[str] = None) -> Optional[str]:
-    norm = normalize_email(normalized or raw) or normalize_email(raw)
-    if not norm or not is_valid_email_syntax(norm):
-        return None
-    if is_junk_email(norm):
-        return None
-    return norm
+    """Strict: syntax + junk/asset filter + DNS MX."""
+    for candidate in (normalized, raw):
+        if not candidate:
+            continue
+        ok = is_sendable_email(candidate, require_mx=True)
+        if ok:
+            return ok
+    return None
 
 
 class OutreachService:
@@ -164,6 +145,51 @@ class OutreachService:
         process_email_blast.delay(str(blast.id))
         await self.db.refresh(blast)
         return blast
+
+    async def scrub_pending(self, blast_id: UUID) -> dict[str, Any]:
+        """Drop pending outbox rows that fail junk/MX checks (keep blast paused/running)."""
+        blast = await self._get_blast(blast_id)
+        rows = (
+            await self.db.execute(
+                select(EmailOutboxItem).where(
+                    EmailOutboxItem.blast_id == blast.id,
+                    EmailOutboxItem.status == "pending",
+                )
+            )
+        ).scalars().all()
+
+        skipped = 0
+        kept = 0
+        samples: list[str] = []
+        for item in rows:
+            if pick_sendable_email(item.to_email):
+                kept += 1
+                continue
+            item.status = "skipped"
+            item.error = "Failed strict email filter (junk/asset/no MX)"
+            skipped += 1
+            if len(samples) < 15:
+                samples.append(item.to_email)
+            blast.total_skipped = (blast.total_skipped or 0) + 1
+
+        await self.db.commit()
+        pending = await self.db.scalar(
+            select(func.count())
+            .select_from(EmailOutboxItem)
+            .where(
+                EmailOutboxItem.blast_id == blast.id,
+                EmailOutboxItem.status == "pending",
+            )
+        )
+        return {
+            "blast_id": str(blast.id),
+            "status": blast.status,
+            "scrubbed_skipped": skipped,
+            "kept_pending": kept,
+            "pending": int(pending or 0),
+            "total_skipped": blast.total_skipped,
+            "sample_skipped": samples,
+        }
 
     async def status(self, blast_id: UUID) -> dict[str, Any]:
         blast = await self._get_blast(blast_id)
@@ -360,6 +386,32 @@ class OutreachExecutionService:
             blast.last_error = None
             self.session.commit()
             return {"status": "completed", "sent": blast.total_sent}
+
+        # Re-check quality at send time (asset scrapes / no MX never go out)
+        if not pick_sendable_email(item.to_email):
+            item.status = "skipped"
+            item.error = "Failed strict email filter (junk/asset/no MX)"
+            blast.total_skipped = (blast.total_skipped or 0) + 1
+            self.session.commit()
+            remaining = (
+                self.session.execute(
+                    select(func.count())
+                    .select_from(EmailOutboxItem)
+                    .where(
+                        EmailOutboxItem.blast_id == blast.id,
+                        EmailOutboxItem.status == "pending",
+                    )
+                ).scalar_one()
+            )
+            if remaining and blast.status in {"running", "waiting_daily_cap"}:
+                from app.workers.outreach_tasks import process_email_blast
+
+                process_email_blast.apply_async(args=[str(blast.id)], countdown=2)
+            elif not remaining:
+                blast.status = "completed"
+                blast.completed_at = datetime.now(timezone.utc)
+                self.session.commit()
+            return {"status": "skipped", "email": item.to_email}
 
         smtp = (
             self.session.execute(

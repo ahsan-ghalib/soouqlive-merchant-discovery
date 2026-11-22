@@ -15,8 +15,6 @@ htmlcov/
 .ruff_cache/
 
 # Environment / secrets
-.env
-.env.local
 *.pem
 
 # Storage
@@ -31,7 +29,6 @@ dist/
 
 # IDE / OS
 .idea/
-.vscode/
 *.swp
 .DS_Store
 
@@ -45,3 +42,4 @@ logs/
 
 backend/.env
 frontend/.env*
+config.bat

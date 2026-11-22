@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: soouq_merchant_postgres
     restart: unless-stopped
     environment:
@@ -42,8 +42,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
-      FRONTEND_URL: ${FRONTEND_URL:-http://187.77.172.90:3000}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://187.77.172.90:3000,http://187.77.172.90:8000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://187.77.172.90:3010}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://187.77.172.90:3010,http://187.77.172.90:8000}
     ports:
       - "8000:8000"
     volumes:
@@ -93,7 +93,7 @@ services:
     container_name: soouq_merchant_frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3010:3000"
     depends_on:
       - backend
 

@@ -14,15 +14,6 @@ _EMAIL_RE = re.compile(
     r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"
 )
 
-_DISCARD_DOMAINS = {
-    "example.com",
-    "example.org",
-    "sentry.io",
-    "wixpress.com",
-    "cloudflare.com",
-    "schema.org",
-}
-
 
 def extract_emails(html: str, page_url: str | None = None) -> list[str]:
     found: set[str] = set()
@@ -44,12 +35,7 @@ def extract_emails(html: str, page_url: str | None = None) -> list[str]:
 
 
 def _add(bucket: set[str], raw: str) -> None:
+    # normalize_email already drops junk/asset scrapes
     email = normalize_email(raw)
-    if not email:
-        return
-    domain = email.split("@", 1)[1]
-    if domain in _DISCARD_DOMAINS:
-        return
-    if any(email.endswith(f"@{d}") for d in _DISCARD_DOMAINS):
-        return
-    bucket.add(email)
+    if email:
+        bucket.add(email)

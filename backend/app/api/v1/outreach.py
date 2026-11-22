@@ -84,3 +84,13 @@ async def resume_blast(blast_id: UUID, db: DbSession, user: ManagerUser):
         data={"id": str(blast.id), "status": blast.status},
         message="Blast resumed",
     )
+
+
+@router.post("/blasts/{blast_id}/scrub-pending")
+async def scrub_pending_blast(blast_id: UUID, db: DbSession, user: ManagerUser):
+    """Skip pending recipients that fail junk/asset/MX checks before resume."""
+    try:
+        result = await OutreachService(db).scrub_pending(blast_id)
+    except OutreachError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return success_response(data=result, message="Pending outbox scrubbed")
